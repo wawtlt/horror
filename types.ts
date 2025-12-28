@@ -1,7 +1,7 @@
 export type HorrorIntensity = 'mild' | 'standard' | 'extreme';
 export type VisualTheme = 'default' | 'tombstone' | 'parchment' | 'asylum';
 export type Language = 'ja' | 'en';
-export type VoiceName = 'Fenrir' | 'Charon' | 'Kore' | 'Puck' | 'Zephyr' | 'Aoede' | string;
+export type VoiceName = 'Fenrir' | 'Charon' | 'Kore' | 'Puck' | 'Zephyr' | 'Aoede' | 'Orion' | 'Lyra' | 'Ursa' | string;
 
 export interface UserProfile {
   username: string;
@@ -11,6 +11,10 @@ export interface UserProfile {
   brightness: number;
   jumpScaresEnabled: boolean;
   voice: VoiceName;
+  // Auth fields
+  uid?: string;
+  email?: string | null;
+  photoURL?: string | null;
 }
 
 export interface StoryState {

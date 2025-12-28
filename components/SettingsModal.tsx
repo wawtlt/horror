@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
-import { X, Sun, FileText, Zap, ZapOff, Skull, Ghost, AlertOctagon, Palette, Scroll, Landmark, Languages, User, Mic, Play, Loader2 } from 'lucide-react';
-import { HorrorIntensity, VisualTheme, Language } from '../types';
+import React, { useState, useEffect } from 'react';
+import { X, Sun, FileText, Zap, ZapOff, Skull, Ghost, AlertOctagon, Palette, Scroll, Landmark, Languages, User, Mic, Play, Loader2, LogOut } from 'lucide-react';
+import { HorrorIntensity, VisualTheme, Language, UserProfile } from '../types';
 import { generateHorrorSpeech } from '../services/geminiService';
+import { loginWithGoogle, logout } from '../services/firebase';
 import { decode, decodeAudioData } from '../services/audioUtils';
 
 interface SettingsModalProps {
@@ -21,16 +22,69 @@ interface SettingsModalProps {
   setUsername: (name: string) => void;
   voice: string;
   setVoice: (voice: string) => void;
+  profile?: UserProfile;
 }
 
 const VOICE_OPTIONS = [
-  { id: 'Fenrir', label: 'Fenrir', desc: 'Deep / Intense', gender: 'Male' },
-  { id: 'Charon', label: 'Charon', desc: 'Low / Authoritative', gender: 'Male' },
-  { id: 'Kore', label: 'Kore', desc: 'Calm / Clear', gender: 'Female' },
-  { id: 'Puck', label: 'Puck', desc: 'Neutral / Tenor', gender: 'Male' },
-  { id: 'Zephyr', label: 'Zephyr', desc: 'Soft / Gentle', gender: 'Female' },
-  { id: 'Aoede', label: 'Aoede', desc: 'Confident / Proud', gender: 'Female' },
+  { 
+    id: 'Fenrir', 
+    label: { en: 'Fenrir', ja: 'フェンリル' }, 
+    desc: { en: 'Deep / Intense', ja: '重厚 / 激しい' }, 
+    gender: 'Male' 
+  },
+  { 
+    id: 'Charon', 
+    label: { en: 'Charon', ja: 'カロン' }, 
+    desc: { en: 'Low / Authoritative', ja: '低音 / 威圧的' }, 
+    gender: 'Male' 
+  },
+  { 
+    id: 'Kore', 
+    label: { en: 'Kore', ja: 'コレ' }, 
+    desc: { en: 'Calm / Clear', ja: '静寂 / 明瞭' }, 
+    gender: 'Female' 
+  },
+  { 
+    id: 'Puck', 
+    label: { en: 'Puck', ja: 'パック' }, 
+    desc: { en: 'Neutral / Tenor', ja: '中性的 / 高音' }, 
+    gender: 'Male' 
+  },
+  { 
+    id: 'Zephyr', 
+    label: { en: 'Zephyr', ja: 'ゼファー' }, 
+    desc: { en: 'Soft / Gentle', ja: '柔和 / 優しい' }, 
+    gender: 'Female' 
+  },
+  { 
+    id: 'Aoede', 
+    label: { en: 'Aoede', ja: 'アオエデ' }, 
+    desc: { en: 'Confident / Proud', ja: '自信 / 誇り' }, 
+    gender: 'Female' 
+  },
+  // Expanded Voices
+  { 
+    id: 'Orion', 
+    label: { en: 'The Narrator', ja: '語り部' }, 
+    desc: { en: 'Dry / Academic', ja: '淡々 / 学術的' }, 
+    gender: 'Male' 
+  },
+  { 
+    id: 'Lyra', 
+    label: { en: 'The Child', ja: '子供' }, 
+    desc: { en: 'Innocent / Chilling', ja: '無垢 / 不気味' }, 
+    gender: 'Female' 
+  },
+  { 
+    id: 'Ursa', 
+    label: { en: 'The Ancient One', ja: '古の者' }, 
+    desc: { en: 'Deep / Resonant', ja: '深淵 / 響き' }, 
+    gender: 'Male' 
+  },
 ];
+
+// Audio Cache to prevent regenerating the same sample repeatedly
+const audioCache: Record<string, AudioBuffer> = {};
 
 const SettingsModal: React.FC<SettingsModalProps> = ({ 
   isOpen, 
@@ -48,13 +102,31 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
   username,
   setUsername,
   voice,
-  setVoice
+  setVoice,
+  profile
 }) => {
   const [playingVoiceId, setPlayingVoiceId] = useState<string | null>(null);
+  const [isAuthLoading, setIsAuthLoading] = useState(false);
+
+  // Stop audio when modal closes
+  useEffect(() => {
+    if (!isOpen) {
+        setPlayingVoiceId(null);
+    }
+  }, [isOpen]);
 
   if (!isOpen) return null;
 
   const isJa = language === 'ja';
+  const isLoggedIn = !!profile?.uid;
+
+  // Localized Labels
+  const THEME_LABELS = {
+    default: { en: 'Default', ja: '標準' },
+    tombstone: { en: 'Tombstone', ja: '墓標' },
+    parchment: { en: 'Parchment', ja: '古文書' },
+    asylum: { en: 'Asylum', ja: '廃病棟' }
+  };
 
   const handlePlaySample = async (e: React.MouseEvent, voiceId: string) => {
       e.stopPropagation();
@@ -64,13 +136,30 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
       setVoice(voiceId); // Select the voice as well
 
       try {
-          // Simple sample text
-          const sampleText = isJa ? "深淵へようこそ..." : "Welcome to the abyss...";
+          const ctx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
+
+          // Check Cache First
+          if (audioCache[voiceId]) {
+              const source = ctx.createBufferSource();
+              source.buffer = audioCache[voiceId];
+              source.connect(ctx.destination);
+              source.onended = () => {
+                  setPlayingVoiceId(null);
+                  ctx.close();
+              };
+              source.start();
+              return;
+          }
+
+          // If not cached, generate
+          const sampleText = isJa ? "声のサンプルです。" : "Voice sample.";
           const base64 = await generateHorrorSpeech(sampleText, language, voiceId);
           
-          const ctx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
           const bytes = decode(base64);
           const buffer = await decodeAudioData(bytes, ctx, 24000, 1);
+          
+          // Save to cache
+          audioCache[voiceId] = buffer;
           
           const source = ctx.createBufferSource();
           source.buffer = buffer;
@@ -86,6 +175,28 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
       } catch (err) {
           console.error("Failed to play sample", err);
           setPlayingVoiceId(null);
+      }
+  };
+
+  const handleLogin = async () => {
+      setIsAuthLoading(true);
+      try {
+          await loginWithGoogle();
+      } catch (e) {
+          alert("Login failed. Please check console or config.");
+      } finally {
+          setIsAuthLoading(false);
+      }
+  };
+
+  const handleLogout = async () => {
+      setIsAuthLoading(true);
+      try {
+          await logout();
+      } catch (e) {
+          console.error(e);
+      } finally {
+          setIsAuthLoading(false);
       }
   };
 
@@ -112,24 +223,72 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
           <span>{isJa ? "設定 / Settings" : "Settings"}</span>
         </h2>
         
-        {/* Username Input */}
-        <div className="mb-8">
-            <label className="flex items-center gap-2 text-gray-200 mb-3 text-base font-medium">
+        {/* Username / Authentication */}
+        <div className="mb-8 p-4 bg-gray-950/50 border border-gray-800 rounded-md">
+            <label className="flex items-center gap-2 text-gray-200 mb-4 text-base font-medium">
                 <User size={20} className="text-indigo-500" />
-                <span>{isJa ? "ユーザー名 (Name)" : "Your Name"}</span>
+                <span>{isJa ? "ユーザー (Account)" : "User Account"}</span>
             </label>
-            <input 
-                type="text" 
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                placeholder={isJa ? "物語に登場する名前を入力..." : "Enter name for story personalization..."}
-                className="w-full bg-gray-800 border border-gray-700 p-3 rounded-md text-gray-200 focus:border-indigo-500 focus:outline-none transition-colors"
-            />
-            <p className="text-xs text-gray-500 mt-2">
-                {isJa 
-                 ? "※ 入力すると、物語の中であなたの名前が呼ばれることがあります。" 
-                 : "* If entered, your name may appear in the stories for immersion."}
-            </p>
+
+            {isLoggedIn ? (
+                <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                        {profile?.photoURL ? (
+                            <img src={profile.photoURL} alt="User" className="w-10 h-10 rounded-full border border-gray-600" />
+                        ) : (
+                            <div className="w-10 h-10 rounded-full bg-gray-700 flex items-center justify-center text-gray-300 font-bold">
+                                {profile?.username?.charAt(0) || "?"}
+                            </div>
+                        )}
+                        <div>
+                            <p className="text-gray-200 font-bold">{profile?.username}</p>
+                            <p className="text-xs text-gray-500">{profile?.email}</p>
+                        </div>
+                    </div>
+                    <button
+                        onClick={handleLogout}
+                        disabled={isAuthLoading}
+                        className="text-xs px-3 py-2 bg-red-900/20 text-red-400 border border-red-900/50 rounded hover:bg-red-900/40 transition-colors flex items-center gap-1"
+                    >
+                        {isAuthLoading ? <Loader2 size={12} className="animate-spin" /> : <LogOut size={12} />}
+                        {isJa ? "ログアウト" : "Sign Out"}
+                    </button>
+                </div>
+            ) : (
+                <div className="space-y-4">
+                    <div className="flex flex-col gap-2">
+                         <input 
+                            type="text" 
+                            value={username}
+                            onChange={(e) => setUsername(e.target.value)}
+                            placeholder={isJa ? "名前を入力 (ゲスト)..." : "Enter name (Guest)..."}
+                            className="w-full bg-gray-800 border border-gray-700 p-3 rounded-md text-gray-200 focus:border-indigo-500 focus:outline-none transition-colors"
+                        />
+                        <p className="text-xs text-gray-500">
+                             {isJa ? "ゲストとして利用するか、Googleでログインして体験を保存してください。" : "Use as guest or login to save your experience."}
+                        </p>
+                    </div>
+
+                    <div className="flex items-center gap-2 my-2">
+                        <div className="h-px bg-gray-800 flex-1"></div>
+                        <span className="text-xs text-gray-600">OR</span>
+                        <div className="h-px bg-gray-800 flex-1"></div>
+                    </div>
+
+                    <button
+                        onClick={handleLogin}
+                        disabled={isAuthLoading}
+                        className="w-full py-3 bg-white text-gray-900 font-bold rounded-md hover:bg-gray-100 transition-colors flex items-center justify-center gap-2"
+                    >
+                        {isAuthLoading ? (
+                             <Loader2 size={18} className="animate-spin" />
+                        ) : (
+                             <svg className="w-4 h-4" viewBox="0 0 24 24"><path fill="currentColor" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" /><path fill="currentColor" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" /><path fill="currentColor" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" /><path fill="currentColor" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" /></svg>
+                        )}
+                        {isJa ? "Googleでログイン" : "Sign in with Google"}
+                    </button>
+                </div>
+            )}
         </div>
 
         {/* Language Selector */}
@@ -179,8 +338,8 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                             : 'bg-gray-800 border-gray-700 text-gray-400 hover:bg-gray-700'
                         }`}
                     >
-                        <span className="font-bold z-10">{v.label}</span>
-                        <span className="text-[10px] opacity-70 z-10">{v.desc}</span>
+                        <span className="font-bold z-10">{isJa ? v.label.ja : v.label.en}</span>
+                        <span className="text-[10px] opacity-70 z-10">{isJa ? v.desc.ja : v.desc.en}</span>
                         
                         {/* Play Sample Button */}
                         <div 
@@ -291,7 +450,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                     }`}
                   >
                     {t.icon}
-                    <span>{t.label}</span>
+                    <span>{isJa ? THEME_LABELS[t.id as keyof typeof THEME_LABELS].ja : t.label}</span>
                   </button>
                 ))}
             </div>

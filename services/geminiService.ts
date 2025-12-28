@@ -13,34 +13,35 @@ const interpretError = (error: any, language: Language): string => {
   if (msg.includes("SAFETY") || msg.includes("BLOCKED") || msg.includes("HARM_CATEGORY") || msg.includes("FINISH_REASON")) {
     if (msg.includes("SEXUALLY_EXPLICIT")) {
        return isJa 
-         ? "その内容は禁忌とされています... (Block: 性的表現)" 
-         : "That content is forbidden... (Block: Sexually Explicit)";
+         ? "禁忌：性的な表現が含まれているため、闇がそれを拒絶しました。" 
+         : "Taboo: Darkness rejected the content due to explicit nature.";
     }
     if (msg.includes("HATE_SPEECH")) {
        return isJa 
-         ? "憎悪の念が強すぎます... (Block: ヘイトスピーチ)" 
-         : "The hatred is too strong... (Block: Hate Speech)";
+         ? "禁忌：憎悪に満ちた言葉は、霊たちを怒らせます。" 
+         : "Taboo: Hateful words anger the spirits.";
     }
     if (msg.includes("HARASSMENT")) {
        return isJa 
-         ? "誰かを傷つける言葉は闇に飲まれます... (Block: ハラスメント)" 
-         : "Words meant to harm are swallowed by darkness... (Block: Harassment)";
+         ? "禁忌：他者を傷つける意図は、呪いとなって返ってきます。" 
+         : "Taboo: Harmful intent returns as a curse.";
     }
     if (msg.includes("DANGEROUS")) {
        return isJa 
-         ? "それは危険すぎます... (Block: 危険なコンテンツ)" 
-         : "That is too dangerous... (Block: Dangerous Content)";
+         ? "禁忌：危険な儀式（コンテンツ）は中断されました。" 
+         : "Taboo: Dangerous rituals (content) were interrupted.";
     }
+    // Generic Safety
     return isJa 
-      ? "その恐怖はあまりにも深く、禁忌に触れてしまいました... (Safety Block: 表現が過激すぎると判断されました)"
-      : "The horror was too deep, touching upon the forbidden... (Safety Block: Content deemed too extreme)";
+      ? "その恐怖はあまりにも深く、禁忌に触れてしまいました... (Safety Block)"
+      : "The horror was too deep, touching upon the forbidden... (Safety Block)";
   }
 
   // 2. Resource Exhausted / Quota (429)
   if (msg.includes("429") || msg.includes("QUOTA") || msg.includes("EXHAUSTED") || msg.includes("RESOURCE_EXHAUSTED")) {
     return isJa 
-      ? "霊力が尽きてしまいました... 少し時間を置いてから再試行してください。 (Rate Limit: 429)"
-      : "The spiritual energy is exhausted... Please wait a moment before trying again. (Rate Limit: 429)";
+      ? "霊力が枯渇しています... しばらく時間を置いてから、再び儀式を行ってください。"
+      : "Spiritual energy is exhausted... Please wait a while before attempting the ritual again.";
   }
 
   // 3. API Key / Auth (401, 403)
@@ -53,15 +54,15 @@ const interpretError = (error: any, language: Language): string => {
   // 4. Not Found / Invalid Argument (400, 404)
   if (msg.includes("400") || msg.includes("INVALID_ARGUMENT") || msg.includes("404") || msg.includes("NOT_FOUND")) {
     return isJa 
-      ? "呼びかけ方が間違っているようです... (Invalid Request: 400/404)"
-      : "The incantation was incorrect... (Invalid Request: 400/404)";
+      ? "呪文（プロンプト）が間違っています。言葉を選び直してください。"
+      : "The incantation (prompt) is incorrect. Choose your words carefully.";
   }
 
   // 5. Server Errors (500, 502, 503, 504)
   if (msg.includes("500") || msg.includes("502") || msg.includes("503") || msg.includes("504") || msg.includes("OVERLOADED") || msg.includes("UNAVAILABLE") || msg.includes("INTERNAL")) {
     return isJa 
-      ? "彼岸との通信が混信しています... しばらく待ってから呼んでください。 (Server Error: 5xx)"
-      : "Connection with the other side is distorted... Please wait before calling again. (Server Error: 5xx)";
+      ? "彼岸への門が混雑しています... 霊たちが騒がしいようです。"
+      : "The gate to the other side is crowded... The spirits are restless.";
   }
 
   // 6. Network / Fetch Errors
@@ -74,8 +75,8 @@ const interpretError = (error: any, language: Language): string => {
   // 7. JSON Parsing / Response Format
   if (msg.includes("JSON") || msg.includes("SYNTAXERROR") || msg.includes("UNEXPECTED TOKEN") || msg.includes("NO TEXT GENERATED")) {
     return isJa 
-      ? "物語の形が崩れてしまいました... もう一度試してください。 (Malformed Response)"
-      : "The story's form has crumbled... Please try again. (Malformed Response)";
+      ? "物語が形を成しませんでした... 混沌が強すぎます。"
+      : "The story failed to take shape... The chaos is too strong.";
   }
 
   // Default fallback
@@ -233,8 +234,14 @@ export const generateHorrorStory = async (prompt: string, intensity: HorrorInten
       },
     });
 
+    // Explicit Check: Finish Reason
+    const candidate = response.candidates?.[0];
+    if (candidate?.finishReason && candidate.finishReason !== "STOP") {
+        throw new Error(`BLOCKED: ${candidate.finishReason}`);
+    }
+
     const text = response.text;
-    if (!text) throw new Error("No text generated");
+    if (!text) throw new Error("NO TEXT GENERATED");
 
     // Attempt to parse JSON. If the model is blocked, text might be partial or error message
     let storyData: StoryState;
@@ -277,6 +284,12 @@ export const generateStoryContinuation = async (
       },
     });
 
+    // Check Candidate
+    const candidate = response.candidates?.[0];
+    if (candidate?.finishReason && candidate.finishReason !== "STOP") {
+        throw new Error(`BLOCKED: ${candidate.finishReason}`);
+    }
+
     const text = response.text;
     if (!text) throw new Error("No continuation generated");
     return text.trim();
@@ -301,8 +314,16 @@ export const generateHorrorImage = async (imagePrompt: string): Promise<string> 
       }
     });
 
+    // Explicit Check for FinishReason in Image Generation
+    const candidate = response.candidates?.[0];
+    if (candidate?.finishReason === 'SAFETY') {
+        console.warn("Image Generation: Blocked by Safety");
+        // We return empty to allow story to proceed, but log it.
+        return "";
+    }
+
     let base64Image = "";
-    const parts = response.candidates?.[0]?.content?.parts;
+    const parts = candidate?.content?.parts;
     
     if (parts) {
       for (const part of parts) {
@@ -313,16 +334,7 @@ export const generateHorrorImage = async (imagePrompt: string): Promise<string> 
       }
     }
 
-    if (!base64Image) {
-      // Check if it was blocked
-      const finishReason = response.candidates?.[0]?.finishReason;
-      if (finishReason === 'SAFETY') {
-         console.warn("Image generation blocked due to safety.");
-      }
-      return "";
-    }
-
-    return base64Image;
+    return base64Image || "";
   } catch (error) {
     // We log specific image errors but do not throw, so the story can still be displayed without the image.
     // Use 'en' for log interpretation or simple default

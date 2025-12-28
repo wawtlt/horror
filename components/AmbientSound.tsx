@@ -54,7 +54,7 @@ const AmbientSound: React.FC<AmbientSoundProps> = ({ isPlaying, toggle }) => {
 
     const filter = ctx.createBiquadFilter();
     filter.type = 'lowpass';
-    filter.frequency.value = 400;
+    filter.frequency.value = 300; // Lowered from 400 to make it less harsh
     filter.Q.value = 1;
 
     // LFO to modulate wind frequency (simulating gusts)
@@ -191,7 +191,7 @@ const AmbientSound: React.FC<AmbientSoundProps> = ({ isPlaying, toggle }) => {
       audioContextRef.current = ctx;
 
       const masterGain = ctx.createGain();
-      masterGain.gain.value = 0.5; // Master volume
+      masterGain.gain.value = 0.2; // Reduced from 0.5 to be less intrusive
       masterGain.connect(ctx.destination);
 
       playDrone(ctx, masterGain);

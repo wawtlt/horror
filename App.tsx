@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { generateHorrorStory, generateHorrorSpeech, generateHorrorImage, generateStoryContinuation } from './services/geminiService';
+import { subscribeToAuth, loginWithGoogle } from './services/firebase';
 import { AppStatus, StoryState, HorrorIntensity, VisualTheme, Language, UserProfile } from './types';
 import GlitchText from './components/GlitchText';
 import LoadingScreen from './components/LoadingScreen';
@@ -10,7 +11,7 @@ import AmbientSound from './components/AmbientSound';
 import Feedback from './components/Feedback';
 import JumpScare from './components/JumpScare';
 import ShareModal from './components/ShareModal';
-import { Ghost, RefreshCw, AlertTriangle, Settings, Share2, Copy, Check, Twitter, BookOpen, Save, Trash2, Sparkles, Plus, Edit2, X, PenTool, Eye, AlertOctagon, Feather } from 'lucide-react';
+import { Ghost, RefreshCw, AlertTriangle, Settings, Share2, Copy, Check, Twitter, BookOpen, Save, Trash2, Sparkles, Plus, Edit2, X, PenTool, Eye, AlertOctagon, Feather, LogIn, User, Loader2 } from 'lucide-react';
 
 // Translations configuration
 const TRANSLATIONS = {
@@ -39,7 +40,7 @@ const TRANSLATIONS = {
     audioArchiveNote: "※ アーカイブされた物語の音声は再生されません。",
     tweetText: "恐怖を体験しました...",
     manageSeeds: "編集",
-    addSeed: "追加",
+    addSeed: "新規作成",
     editSeedTitle: "テンプレート編集",
     label: "タイトル",
     prompt: "プロンプト（物語の設定）",
@@ -54,7 +55,9 @@ const TRANSLATIONS = {
     confirmTitle: "警告",
     confirmBody: "この物語を生成しますか？\n一度覗いた深淵から、戻ることはできません。",
     confirmProceed: "覚悟する",
-    confirmCancel: "引き返す"
+    confirmCancel: "引き返す",
+    login: "ログイン",
+    account: "アカウント"
   },
   en: {
     appTitle: "KAIDAN",
@@ -81,7 +84,7 @@ const TRANSLATIONS = {
     audioArchiveNote: "* Audio is not available for archived stories.",
     tweetText: "I experienced true horror...",
     manageSeeds: "Edit",
-    addSeed: "Add",
+    addSeed: "Create New",
     editSeedTitle: "Edit Template",
     label: "Label",
     prompt: "Prompt Content",
@@ -96,7 +99,9 @@ const TRANSLATIONS = {
     confirmTitle: "WARNING",
     confirmBody: "Are you sure you want to generate this story?\nOnce you gaze into the abyss, there is no turning back.",
     confirmProceed: "Proceed",
-    confirmCancel: "Turn Back"
+    confirmCancel: "Turn Back",
+    login: "Login",
+    account: "Account"
   }
 };
 
@@ -183,6 +188,33 @@ const App: React.FC = () => {
     return DEFAULT_PROFILE;
   });
 
+  // Auth Loading State
+  const [isAuthLoading, setIsAuthLoading] = useState(false);
+
+  // Listen for Auth Changes
+  useEffect(() => {
+    const unsubscribe = subscribeToAuth((user) => {
+        if (user) {
+            setProfile(prev => ({
+                ...prev,
+                uid: user.uid,
+                email: user.email,
+                photoURL: user.photoURL,
+                username: user.displayName || prev.username // Override username if set in Google, else keep manual
+            }));
+        } else {
+            // Clear auth info on logout, keep settings
+            setProfile(prev => ({
+                ...prev,
+                uid: undefined,
+                email: undefined,
+                photoURL: undefined
+            }));
+        }
+    });
+    return () => unsubscribe();
+  }, []);
+
   // Persist Profile
   useEffect(() => {
     localStorage.setItem('kaidan_profile', JSON.stringify(profile));
@@ -250,7 +282,8 @@ const App: React.FC = () => {
   const ghostClickTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   
   // Advanced Hidden Features
-  const [bloodMode, setBloodMode] = useState(false); // Konami Code
+  const [bloodMode, setBloodMode] = useState(false); 
+  const [cursedMode, setCursedMode] = useState(false); // New intense mode
   const [glitchImage, setGlitchImage] = useState(false); // Image interaction
   const konamiIndex = useRef(0);
 
@@ -315,11 +348,8 @@ const App: React.FC = () => {
       if (e.key === KONAMI_CODE[konamiIndex.current]) {
         konamiIndex.current++;
         if (konamiIndex.current === KONAMI_CODE.length) {
-          // Trigger Blood Mode
-          setBloodMode(prev => !prev);
+          triggerCursedMode(); // Trigger Cursed Mode
           konamiIndex.current = 0;
-          // Haptic feedback if available
-          if (navigator.vibrate) navigator.vibrate([50, 50, 50, 50, 200]);
         }
       } else {
         konamiIndex.current = 0;
@@ -346,6 +376,63 @@ const App: React.FC = () => {
   }, [t]);
 
   // --- Hidden Element Handlers ---
+
+  const triggerCursedMode = () => {
+      setCursedMode(true);
+      setBloodMode(true);
+      
+      // Intense vibration
+      if (navigator.vibrate) navigator.vibrate([100, 30, 100, 30, 100, 30, 500]);
+
+      // Scary audio sting
+      try {
+          const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+          const ctx = new AudioContextClass();
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          
+          osc.type = 'sawtooth';
+          // Glitchy pitch drop
+          osc.frequency.setValueAtTime(100, ctx.currentTime);
+          osc.frequency.linearRampToValueAtTime(30, ctx.currentTime + 1.5);
+          
+          // Noise layer
+          const bufferSize = ctx.sampleRate * 2;
+          const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+          const data = buffer.getChannelData(0);
+          for (let i = 0; i < bufferSize; i++) {
+              data[i] = Math.random() * 2 - 1;
+          }
+          const noise = ctx.createBufferSource();
+          noise.buffer = buffer;
+          const noiseGain = ctx.createGain();
+          
+          gain.gain.setValueAtTime(0.5, ctx.currentTime);
+          gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 1.5);
+          
+          noiseGain.gain.setValueAtTime(0.6, ctx.currentTime);
+          noiseGain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 1.5);
+
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+          
+          noise.connect(noiseGain);
+          noiseGain.connect(ctx.destination);
+          
+          osc.start();
+          noise.start();
+          
+          osc.stop(ctx.currentTime + 1.5);
+          noise.stop(ctx.currentTime + 1.5);
+      } catch(e) {}
+
+      // Auto turn off
+      setTimeout(() => {
+          setCursedMode(false);
+          setBloodMode(false);
+      }, 5000);
+  };
+
   const handleGhostClick = () => {
       // Audio feedback for click (subtle thud)
       try {
@@ -380,6 +467,21 @@ const App: React.FC = () => {
   const handleImageClick = () => {
       setGlitchImage(true);
       setTimeout(() => setGlitchImage(false), 300); // Short glitch duration
+  };
+
+  const handleLogin = async () => {
+      if (profile.uid) {
+          setIsSettingsOpen(true);
+          return;
+      }
+      setIsAuthLoading(true);
+      try {
+          await loginWithGoogle();
+      } catch (e) {
+          console.error("Login failed", e);
+      } finally {
+          setIsAuthLoading(false);
+      }
   };
 
   // --- Template Handlers ---
@@ -589,28 +691,28 @@ const App: React.FC = () => {
   // Theme Styles Configuration
   const themeStyles = {
     default: {
-      container: 'bg-gradient-to-b from-transparent via-black/20 to-transparent border-red-900/30',
-      title: 'text-red-700 font-serif font-bold tracking-wider drop-shadow-md',
-      text: 'text-gray-300 font-serif',
-      button: 'bg-gray-900/50 hover:bg-red-900/30 text-gray-400 hover:text-white border-gray-800 hover:border-red-800'
+      container: 'bg-gradient-to-b from-transparent via-black/40 to-transparent border-red-900/30',
+      title: 'text-red-600 font-serif font-bold tracking-wider drop-shadow-md',
+      text: 'text-gray-200 font-serif leading-relaxed',
+      button: 'bg-gray-900/80 hover:bg-red-900/40 text-gray-300 hover:text-white border-gray-800 hover:border-red-800'
     },
     tombstone: {
-      container: 'bg-zinc-900 border-stone-600 rounded-sm shadow-2xl',
-      title: 'text-stone-300 font-serif tracking-widest uppercase',
-      text: 'text-stone-400 font-sans leading-loose',
-      button: 'bg-zinc-800 hover:bg-zinc-700 text-stone-400 hover:text-stone-200 border-zinc-600 hover:border-stone-400'
+      container: 'bg-zinc-950 border-stone-800 rounded-sm shadow-2xl',
+      title: 'text-stone-200 font-serif tracking-widest uppercase',
+      text: 'text-stone-300 font-sans leading-loose',
+      button: 'bg-zinc-900 hover:bg-zinc-800 text-stone-300 hover:text-stone-100 border-zinc-700 hover:border-stone-500'
     },
     parchment: {
       container: 'bg-[#1a1814] border-[#5d4037] rounded-sm shadow-[inset_0_0_40px_rgba(0,0,0,0.5)]',
-      title: 'text-[#d7ccc8] font-serif italic',
-      text: 'text-[#a1887f] font-serif leading-relaxed',
-      button: 'bg-[#2d241e] hover:bg-[#3e2723] text-[#a1887f] hover:text-[#d7ccc8] border-[#4e342e] hover:border-[#8d6e63]'
+      title: 'text-[#efebe9] font-serif italic',
+      text: 'text-[#bcaaa4] font-serif leading-relaxed',
+      button: 'bg-[#2d241e] hover:bg-[#3e2723] text-[#bcaaa4] hover:text-[#efebe9] border-[#4e342e] hover:border-[#8d6e63]'
     },
     asylum: {
-      container: 'bg-slate-900 border-teal-900/40 rounded-sm shadow-[0_0_15px_rgba(20,83,45,0.2)]',
-      title: 'text-teal-200/80 font-mono tracking-tighter',
-      text: 'text-teal-400/70 font-mono',
-      button: 'bg-slate-950 hover:bg-teal-900/20 text-teal-600 hover:text-teal-200 border-teal-900/30 hover:border-teal-500/30'
+      container: 'bg-slate-950 border-teal-900/40 rounded-sm shadow-[0_0_15px_rgba(20,83,45,0.2)]',
+      title: 'text-teal-100/90 font-mono tracking-tighter',
+      text: 'text-teal-300/80 font-mono',
+      button: 'bg-slate-900 hover:bg-teal-900/20 text-teal-500 hover:text-teal-200 border-teal-900/30 hover:border-teal-500/30'
     }
   };
 
@@ -622,15 +724,58 @@ const App: React.FC = () => {
   };
 
   return (
-    <div className={`min-h-screen text-gray-300 selection:bg-red-900 selection:text-white pb-20 relative transition-colors duration-500 ${profile.language === 'en' ? 'font-sans' : 'font-serif'}`}>
+    <div className={`min-h-screen text-gray-200 selection:bg-red-900 selection:text-white pb-20 relative transition-colors duration-500 ${profile.language === 'en' ? 'font-sans' : 'font-serif'} ${cursedMode ? 'overflow-hidden' : ''}`}>
       
       {/* Blood Mode Overlay (Konami Code) */}
       {bloodMode && (
           <div className="fixed inset-0 z-[60] pointer-events-none bg-red-900 opacity-20 mix-blend-color-burn animate-pulse"></div>
       )}
+
+      {/* Cursed Mode Overlay */}
+      {cursedMode && (
+          <div className="fixed inset-0 z-[70] pointer-events-none mix-blend-difference flex items-center justify-center overflow-hidden">
+             <div className="absolute inset-0 bg-white opacity-5 animate-pulse"></div>
+             <div className="text-9xl font-black text-white animate-bounce tracking-tighter opacity-30 select-none transform rotate-12 scale-150">
+                 {profile.language === 'ja' ? '逃ゲロ' : 'R U N'}
+             </div>
+             <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 text-[20vw] font-black text-red-500 opacity-10 animate-ping select-none">
+                 †
+             </div>
+          </div>
+      )}
       
       {/* Top Right Navigation */}
       <div className="fixed top-6 right-6 z-30 flex flex-col gap-4">
+        {/* User / Login Button */}
+        <button 
+          onClick={handleLogin}
+          className={`text-gray-400 hover:text-white transition-all p-3 rounded-full backdrop-blur-sm border border-transparent relative group ${
+              profile.uid 
+              ? 'bg-indigo-900/30 hover:bg-indigo-900/50 hover:border-indigo-500/50' 
+              : 'bg-black/20 hover:bg-red-900/50 hover:border-red-900/30'
+          }`}
+          aria-label={profile.uid ? t.account : t.login}
+          title={profile.uid ? (profile.username || t.account) : t.login}
+          disabled={isAuthLoading}
+        >
+          {isAuthLoading ? (
+            <Loader2 size={28} className="animate-spin" />
+          ) : profile.uid ? (
+             profile.photoURL ? (
+                 <img src={profile.photoURL} alt="User" className="w-7 h-7 rounded-full border border-indigo-500/50" />
+             ) : (
+                 <User size={28} className="text-indigo-400" />
+             )
+          ) : (
+             <LogIn size={28} />
+          )}
+          
+          {/* Tooltip-ish indicator for login status */}
+          {profile.uid && (
+              <span className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-green-500 border-2 border-black rounded-full shadow-[0_0_5px_rgba(34,197,94,0.8)]"></span>
+          )}
+        </button>
+
         <button 
           onClick={resetApp}
           className="text-gray-400 hover:text-white hover:bg-red-900/50 transition-all p-3 rounded-full backdrop-blur-sm bg-black/20 border border-transparent hover:border-red-900/30"
@@ -642,8 +787,9 @@ const App: React.FC = () => {
 
         <button 
           onClick={() => setIsSettingsOpen(true)}
-          className="text-gray-400 hover:text-white hover:bg-red-900/50 transition-all p-3 rounded-full backdrop-blur-sm bg-black/20 border border-transparent hover:border-red-900/30"
+          className="text-gray-400 hover:text-white hover:bg-red-900/50 transition-all p-3 rounded-full backdrop-blur-sm bg-black/20 border border-transparent hover:border-red-900/30 relative"
           aria-label="Settings"
+          title={`Settings (Voice: ${profile.voice})`}
         >
           <Settings size={28} />
         </button>
@@ -666,8 +812,11 @@ const App: React.FC = () => {
       {/* Loading Overlay */}
       {status === AppStatus.GENERATING && <LoadingScreen />}
 
-      {/* Main Content (Affected by Brightness) */}
-      <div style={{ filter: `brightness(${profile.brightness})` }} className="transition-[filter] duration-300">
+      {/* Main Content (Affected by Brightness and Cursed Mode) */}
+      <div 
+         style={{ filter: `brightness(${profile.brightness}) ${cursedMode ? 'invert(1) contrast(2) hue-rotate(180deg) blur(0.5px)' : ''}`, transform: cursedMode ? 'scale(1.02) skewX(2deg)' : 'none' }} 
+         className={`transition-all duration-200 ${cursedMode ? 'ease-linear' : 'ease-out'}`}
+      >
         <main className="container mx-auto px-4 pt-16 md:pt-24 max-w-3xl relative z-10">
           
           {/* Header */}
@@ -775,10 +924,10 @@ const App: React.FC = () => {
                       <button
                         type="button"
                         onClick={() => openTemplateEditor()}
-                        className="text-xs px-3 py-1.5 bg-gray-900/50 border border-dashed border-gray-700 text-gray-500 hover:text-white hover:border-gray-500 hover:bg-gray-800 transition-all rounded-sm font-serif flex items-center gap-1"
+                        className="text-xs px-4 py-1.5 bg-indigo-900/60 border border-indigo-500 text-indigo-100 hover:bg-indigo-800 hover:text-white hover:border-indigo-300 transition-all rounded-sm font-serif flex items-center gap-2 shadow-[0_0_10px_rgba(99,102,241,0.2)] hover:shadow-[0_0_15px_rgba(99,102,241,0.4)] group"
                       >
-                        <Plus size={10} />
-                        {t.addSeed}
+                        <Feather size={12} className="group-hover:-translate-y-0.5 transition-transform" />
+                        <span className="font-bold tracking-wide">{t.addSeed}</span>
                       </button>
                   )}
                 </div>
@@ -795,7 +944,7 @@ const App: React.FC = () => {
                     onChange={(e) => setPrompt(e.target.value)}
                     placeholder={t.inputPlaceholder}
                     rows={3}
-                    className={`w-full bg-black border-b text-xl py-3 px-2 focus:outline-none transition-all placeholder-gray-800 text-gray-200 resize-none ${
+                    className={`w-full bg-black border-b text-xl py-3 px-2 focus:outline-none transition-all placeholder-gray-700 text-gray-100 resize-none ${
                         isCursedInput 
                         ? 'border-red-600 text-red-500 bg-red-950/10 animate-[pulse_2s_infinite]' 
                         : 'border-gray-800 focus:border-red-800 focus:bg-gray-900/30'
@@ -859,7 +1008,7 @@ const App: React.FC = () => {
                       src={`data:image/jpeg;base64,${story.imageUrl}`} 
                       alt="Horror scene" 
                       className={`w-full h-auto object-cover transition-all duration-[2s] ease-out filter ${
-                          glitchImage ? 'invert hue-rotate-180 brightness-150 contrast-200' : ''
+                          glitchImage || cursedMode ? 'invert hue-rotate-180 brightness-150 contrast-200' : ''
                       } ${
                           profile.theme === 'tombstone' ? 'grayscale contrast-125' :
                           profile.theme === 'parchment' ? 'sepia-[0.6] contrast-100 brightness-75' :
@@ -877,7 +1026,15 @@ const App: React.FC = () => {
 
                 {/* Story Text */}
                 <div className={`prose prose-lg max-w-none whitespace-pre-wrap text-justify transition-colors ${currentTheme.text}`}>
-                  {story.content}
+                  {cursedMode ? (
+                      <span className="font-mono text-red-500 break-all animate-pulse text-xl font-bold tracking-[0.2em] leading-loose shadow-red-500 drop-shadow-md">
+                          {Array(50).fill(t.noEscape).join('  ')}
+                          <br/><br/>
+                          {Array(20).fill('†').join(' ')}
+                      </span>
+                  ) : (
+                      story.content
+                  )}
                 </div>
 
                 {/* Audio Player */}
@@ -1028,6 +1185,7 @@ const App: React.FC = () => {
         setUsername={setUsername}
         voice={profile.voice}
         setVoice={setVoice}
+        profile={profile}
       />
 
       {/* Library Modal */}
