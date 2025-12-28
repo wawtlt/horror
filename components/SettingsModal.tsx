@@ -1,6 +1,8 @@
-import React from 'react';
-import { X, Sun, FileText, Zap, ZapOff, Skull, Ghost, AlertOctagon, Palette, Scroll, Landmark, Languages, User, Mic } from 'lucide-react';
+import React, { useState } from 'react';
+import { X, Sun, FileText, Zap, ZapOff, Skull, Ghost, AlertOctagon, Palette, Scroll, Landmark, Languages, User, Mic, Play, Loader2 } from 'lucide-react';
 import { HorrorIntensity, VisualTheme, Language } from '../types';
+import { generateHorrorSpeech } from '../services/geminiService';
+import { decode, decodeAudioData } from '../services/audioUtils';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -48,9 +50,44 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
   voice,
   setVoice
 }) => {
+  const [playingVoiceId, setPlayingVoiceId] = useState<string | null>(null);
+
   if (!isOpen) return null;
 
   const isJa = language === 'ja';
+
+  const handlePlaySample = async (e: React.MouseEvent, voiceId: string) => {
+      e.stopPropagation();
+      if (playingVoiceId) return; // Prevent multiple plays
+
+      setPlayingVoiceId(voiceId);
+      setVoice(voiceId); // Select the voice as well
+
+      try {
+          // Simple sample text
+          const sampleText = isJa ? "深淵へようこそ..." : "Welcome to the abyss...";
+          const base64 = await generateHorrorSpeech(sampleText, language, voiceId);
+          
+          const ctx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
+          const bytes = decode(base64);
+          const buffer = await decodeAudioData(bytes, ctx, 24000, 1);
+          
+          const source = ctx.createBufferSource();
+          source.buffer = buffer;
+          source.connect(ctx.destination);
+          
+          source.onended = () => {
+              setPlayingVoiceId(null);
+              ctx.close();
+          };
+          
+          source.start();
+
+      } catch (err) {
+          console.error("Failed to play sample", err);
+          setPlayingVoiceId(null);
+      }
+  };
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
@@ -136,14 +173,26 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                     <button
                         key={v.id}
                         onClick={() => setVoice(v.id)}
-                        className={`flex flex-col items-center justify-center p-2 rounded-md border text-sm transition-all ${
+                        className={`relative flex flex-col items-center justify-center p-2 rounded-md border text-sm transition-all group overflow-hidden ${
                             voice === v.id
                             ? 'bg-orange-900/30 border-orange-500 text-orange-100'
                             : 'bg-gray-800 border-gray-700 text-gray-400 hover:bg-gray-700'
                         }`}
                     >
-                        <span className="font-bold">{v.label}</span>
-                        <span className="text-[10px] opacity-70">{v.desc}</span>
+                        <span className="font-bold z-10">{v.label}</span>
+                        <span className="text-[10px] opacity-70 z-10">{v.desc}</span>
+                        
+                        {/* Play Sample Button */}
+                        <div 
+                           className="mt-1 z-20"
+                           onClick={(e) => handlePlaySample(e, v.id)}
+                        >
+                             {playingVoiceId === v.id ? (
+                                 <Loader2 size={14} className="animate-spin text-orange-300" />
+                             ) : (
+                                 <Play size={14} className="text-gray-500 hover:text-orange-300 transition-colors" />
+                             )}
+                        </div>
                     </button>
                 ))}
             </div>

@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { generateHorrorStory, generateHorrorSpeech, generateHorrorImage } from './services/geminiService';
+import { generateHorrorStory, generateHorrorSpeech, generateHorrorImage, generateStoryContinuation } from './services/geminiService';
 import { AppStatus, StoryState, HorrorIntensity, VisualTheme, Language, UserProfile } from './types';
 import GlitchText from './components/GlitchText';
 import LoadingScreen from './components/LoadingScreen';
@@ -10,7 +10,7 @@ import AmbientSound from './components/AmbientSound';
 import Feedback from './components/Feedback';
 import JumpScare from './components/JumpScare';
 import ShareModal from './components/ShareModal';
-import { Ghost, RefreshCw, AlertTriangle, Settings, Share2, Copy, Check, Twitter, BookOpen, Save, Trash2, Sparkles, Plus, Edit2, X, PenTool, Eye } from 'lucide-react';
+import { Ghost, RefreshCw, AlertTriangle, Settings, Share2, Copy, Check, Twitter, BookOpen, Save, Trash2, Sparkles, Plus, Edit2, X, PenTool, Eye, AlertOctagon, Feather } from 'lucide-react';
 
 // Translations configuration
 const TRANSLATIONS = {
@@ -27,6 +27,8 @@ const TRANSLATIONS = {
     copy: "コピー",
     copied: "コピー完了",
     newStory: "別の恐怖を体験する",
+    continueStory: "続きを綴る",
+    continuing: "執筆中...",
     footer: "© 2024 Kaidan Project. Do not look behind you.",
     terms: "利用規約・免責事項",
     seed: "物語の種（テンプレート）",
@@ -48,7 +50,11 @@ const TRANSLATIONS = {
     hauntedFooter: "後ろを見ないでください...",
     tabTitleHaunted: "見てるよ...",
     tabTitleLeave: "行かないで...",
-    noEscape: "逃げられない"
+    noEscape: "逃げられない",
+    confirmTitle: "警告",
+    confirmBody: "この物語を生成しますか？\n一度覗いた深淵から、戻ることはできません。",
+    confirmProceed: "覚悟する",
+    confirmCancel: "引き返す"
   },
   en: {
     appTitle: "KAIDAN",
@@ -63,6 +69,8 @@ const TRANSLATIONS = {
     copy: "Copy",
     copied: "Copied",
     newStory: "Experience Another Horror",
+    continueStory: "Continue Story",
+    continuing: "Writing...",
     footer: "© 2024 Kaidan Project. Do not look behind you.",
     terms: "Terms of Service",
     seed: "Story Seeds (Templates)",
@@ -84,7 +92,11 @@ const TRANSLATIONS = {
     hauntedFooter: "DON'T LOOK BEHIND YOU",
     tabTitleHaunted: "I see you...",
     tabTitleLeave: "Don't leave...",
-    noEscape: "NO ESCAPE"
+    noEscape: "NO ESCAPE",
+    confirmTitle: "WARNING",
+    confirmBody: "Are you sure you want to generate this story?\nOnce you gaze into the abyss, there is no turning back.",
+    confirmProceed: "Proceed",
+    confirmCancel: "Turn Back"
   }
 };
 
@@ -136,6 +148,7 @@ const App: React.FC = () => {
   const [audioData, setAudioData] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [isSaved, setIsSaved] = useState(false);
+  const [isContinuing, setIsContinuing] = useState(false);
   
   // User Profile State (Consolidated)
   const [profile, setProfile] = useState<UserProfile>(() => {
@@ -211,6 +224,7 @@ const App: React.FC = () => {
   const [isShareModalOpen, setIsShareModalOpen] = useState(false);
   const [showJumpScare, setShowJumpScare] = useState(false);
   const [isAnticipating, setIsAnticipating] = useState(false);
+  const [isConfirmOpen, setIsConfirmOpen] = useState(false); // Confirmation Modal
 
   // Library State
   const [isLibraryOpen, setIsLibraryOpen] = useState(false);
@@ -412,7 +426,7 @@ const App: React.FC = () => {
 
   // --- App Logic ---
 
-  const handleGenerate = async (e: React.FormEvent) => {
+  const handlePreGenerate = (e: React.FormEvent) => {
     e.preventDefault();
     if (!prompt.trim()) return;
 
@@ -421,11 +435,17 @@ const App: React.FC = () => {
     if (['run', 'escape', 'help', 'help me', '逃げろ', '助けて', '逃げる'].includes(lowerPrompt)) {
         setPrompt(t.noEscape);
         if (navigator.vibrate) navigator.vibrate(500);
-        // Add a visual shake effect logic here if desired, currently handled by prompt state change visible to user
         return;
     }
 
-    // Request Notification permission immediately on user interaction
+    // Open confirmation modal
+    setIsConfirmOpen(true);
+  };
+
+  const handleGenerateConfirmed = async () => {
+    setIsConfirmOpen(false);
+
+    // Request Notification permission
     if ("Notification" in window && Notification.permission === "default") {
         Notification.requestPermission();
     }
@@ -486,6 +506,29 @@ const App: React.FC = () => {
       console.error(err);
       setStatus(AppStatus.ERROR);
       setErrorMsg(err.message || t.errorGeneric);
+    }
+  };
+
+  const handleContinueStory = async () => {
+    if (!story) return;
+    setIsContinuing(true);
+    setAudioData(null); // Reset audio as it won't match the new text
+    
+    try {
+      const extension = await generateStoryContinuation(story.content, profile.intensity, profile.language);
+      
+      const updatedStory = {
+        ...story,
+        content: story.content + "\n\n" + extension
+      };
+      
+      setStory(updatedStory);
+      setIsSaved(false); // Mark as unsaved
+      
+    } catch (err: any) {
+      setErrorMsg(err.message);
+    } finally {
+      setIsContinuing(false);
     }
   };
 
@@ -741,18 +784,18 @@ const App: React.FC = () => {
                 </div>
               </div>
 
-              <form onSubmit={handleGenerate} className="flex flex-col gap-6">
+              <form onSubmit={handlePreGenerate} className="flex flex-col gap-6">
                 <div>
                   <label htmlFor="fear-input" className={`block text-sm mb-2 tracking-wider transition-colors ${isCursedInput ? 'text-red-600 animate-pulse' : 'text-gray-500'}`}>
                     {t.inputLabel}
                   </label>
-                  <input
+                  <textarea
                     id="fear-input"
-                    type="text"
                     value={prompt}
                     onChange={(e) => setPrompt(e.target.value)}
                     placeholder={t.inputPlaceholder}
-                    className={`w-full bg-black border-b text-xl py-3 px-2 focus:outline-none transition-all placeholder-gray-800 text-gray-200 ${
+                    rows={3}
+                    className={`w-full bg-black border-b text-xl py-3 px-2 focus:outline-none transition-all placeholder-gray-800 text-gray-200 resize-none ${
                         isCursedInput 
                         ? 'border-red-600 text-red-500 bg-red-950/10 animate-[pulse_2s_infinite]' 
                         : 'border-gray-800 focus:border-red-800 focus:bg-gray-900/30'
@@ -821,7 +864,7 @@ const App: React.FC = () => {
                           profile.theme === 'tombstone' ? 'grayscale contrast-125' :
                           profile.theme === 'parchment' ? 'sepia-[0.6] contrast-100 brightness-75' :
                           profile.theme === 'asylum' ? 'hue-rotate-[170deg] grayscale-[0.5] contrast-125' :
-                          'sepia-[0.3] contrast-125 grayscale-[0.3] opacity-80 group-hover:opacity-100 group-hover:scale-105'
+                          'sepia-[0.3] contrast-125 grayscale-[0.3] opacity-80 group-hover:opacity-100 group-hover:scale-110'
                       }`}
                     />
                   </div>
@@ -849,6 +892,21 @@ const App: React.FC = () => {
                 {!audioData && isSaved && (
                    <p className="text-xs text-gray-600 mt-2 text-center font-serif">{t.audioArchiveNote}</p>
                 )}
+                
+                {/* Continue Story Button */}
+                <div className="mt-8 mb-4 text-center">
+                    <button 
+                       onClick={handleContinueStory}
+                       disabled={isContinuing}
+                       className="group relative inline-flex items-center gap-2 px-8 py-3 overflow-hidden text-gray-400 border border-gray-800 hover:text-white hover:border-gray-600 transition-all duration-300 disabled:opacity-50"
+                    >
+                         <div className="absolute inset-0 w-0 bg-gray-800 transition-all duration-[250ms] ease-out group-hover:w-full opacity-30"></div>
+                         {isContinuing ? <RefreshCw className="animate-spin" size={18} /> : <Feather size={18} />}
+                         <span className="relative font-serif tracking-widest text-sm">
+                             {isContinuing ? t.continuing : t.continueStory}
+                         </span>
+                    </button>
+                </div>
                 
                 {/* Share/Save Section */}
                 <div className={`mt-8 pt-6 border-t flex flex-wrap justify-center gap-4 transition-colors ${
@@ -918,6 +976,39 @@ const App: React.FC = () => {
 
         </main>
       </div>
+
+      {/* Confirmation Modal */}
+      {isConfirmOpen && (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center p-4">
+            <div className="absolute inset-0 bg-black/90 backdrop-blur-sm" onClick={() => setIsConfirmOpen(false)} />
+            <div className="relative w-full max-w-sm bg-gray-950 border border-red-900/50 p-8 shadow-[0_0_50px_rgba(220,38,38,0.2)] animate-in zoom-in duration-300 rounded-sm text-center">
+                <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-red-900 to-transparent"></div>
+                <AlertOctagon size={48} className="mx-auto text-red-700 mb-4 animate-pulse" />
+                
+                <h3 className="text-xl font-serif font-bold text-red-100 mb-2 tracking-widest">
+                    {t.confirmTitle}
+                </h3>
+                <p className="text-gray-400 text-sm mb-8 font-serif leading-relaxed whitespace-pre-line">
+                    {t.confirmBody}
+                </p>
+
+                <div className="flex flex-col gap-3">
+                    <button 
+                        onClick={handleGenerateConfirmed}
+                        className="w-full py-3 bg-red-900/20 hover:bg-red-900/40 text-red-500 border border-red-900 transition-all uppercase tracking-widest text-sm font-bold group relative overflow-hidden"
+                    >
+                        <span className="relative z-10 group-hover:text-red-300">{t.confirmProceed}</span>
+                    </button>
+                    <button 
+                        onClick={() => setIsConfirmOpen(false)}
+                        className="w-full py-3 text-gray-500 hover:text-gray-300 transition-colors text-xs tracking-wider"
+                    >
+                        {t.confirmCancel}
+                    </button>
+                </div>
+            </div>
+        </div>
+      )}
 
       {/* Settings Modal (Outside brightness filter) */}
       <SettingsModal 

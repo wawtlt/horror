@@ -254,6 +254,39 @@ export const generateHorrorStory = async (prompt: string, intensity: HorrorInten
   }
 };
 
+export const generateStoryContinuation = async (
+  previousContent: string, 
+  intensity: HorrorIntensity, 
+  language: Language
+): Promise<string> => {
+  try {
+    const isJa = language === 'ja';
+    const prompt = isJa 
+      ? `以下の怪談の続きを、同じトーンと恐怖レベルで執筆してください。文脈を引き継ぎ、物語をさらに深淵へと導いてください。長さは300文字程度。\n\n[前回の内容]:\n${previousContent}`
+      : `Continue the following horror story with the same tone and intensity. Maintain continuity and lead the narrative deeper into the abyss. Approx 150 words.\n\n[Previous Content]:\n${previousContent}`;
+
+    const systemInstruction = isJa
+      ? `あなたは怪談の続きを書く熟練の作家です。恐怖レベルは「${intensity}」です。JSONではなく、プレーンテキストで続きの文章のみを出力してください。`
+      : `You are a master horror writer continuing a story. Intensity level is "${intensity}". Output ONLY the plain text of the continuation, not JSON.`;
+
+    const response = await ai.models.generateContent({
+      model: "gemini-3-flash-preview",
+      contents: prompt,
+      config: {
+        systemInstruction: systemInstruction,
+      },
+    });
+
+    const text = response.text;
+    if (!text) throw new Error("No continuation generated");
+    return text.trim();
+
+  } catch (error) {
+    console.error("Continuation Error:", error);
+    throw new Error(interpretError(error, language));
+  }
+};
+
 export const generateHorrorImage = async (imagePrompt: string): Promise<string> => {
   try {
     const response = await ai.models.generateContent({
